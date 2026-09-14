@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { connectRealtime, type RealtimeConnection } from "../lib/realtime";
 import { readApiResponse } from "../lib/http";
 import MediaPicker from "./media-picker";
+import ReactionPicker from "./reaction-picker";
 import {
   LoaderCircle,
   Hash,
@@ -41,6 +42,11 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { MemberPicker, PeopleManager } from "./members";
+import MentionPicker, {
+  getMentionOptions,
+  type MentionOption,
+  userHandle,
+} from "./mention-picker";
 type User = {
   id: string;
   name: string;
@@ -128,6 +134,8 @@ export default function Page() {
     [mobile, setMobile] = useState(false),
     [tab, setTab] = useState("messages"),
     [mediaPicker, setMediaPicker] = useState<"emoji" | "gif" | null>(null),
+    [mentionQuery, setMentionQuery] = useState<string | null>(null),
+    [mentionIndex, setMentionIndex] = useState(0),
     [saved, setSaved] = useState<string[]>([]),
     [view, setView] = useState("home");
   const [register, setRegister] = useState(false),
@@ -405,16 +413,70 @@ export default function Page() {
   }, [call, endCall]);
   const channel = ws?.channels.find((c) => c.id === active) || ws?.channels[0];
   const user = (id: string) => ws?.users.find((u) => u.id === id);
+  const renderMessageText = (value: string) => {
+    const handles = new Set([
+      "everyone",
+      "here",
+      "channel",
+      ...(ws?.users.map(userHandle) || []),
+    ]);
+    return value.split(/(@[a-zA-Z0-9._-]+)/g).map((part, index) => {
+      const handle = part.startsWith("@") ? part.slice(1) : "";
+      return handles.has(handle) ? (
+        <mark
+          className={
+            handle === userHandle(ws!.user) ? "mention is-current-user" : "mention"
+          }
+          key={`${part}-${index}`}
+        >
+          {part}
+        </mark>
+      ) : (
+        part
+      );
+    });
+  };
   const title = (c: Channel) =>
     c.kind === "dm"
       ? user(c.members.find((id) => id !== ws?.user.id) || "")?.name || c.name
       : c.name;
+  const mentionUsers =
+    channel?.members
+      .map((id) => ws?.users.find((candidate) => candidate.id === id))
+      .filter((candidate): candidate is User => Boolean(candidate)) || [];
+  const mentionOptions = getMentionOptions(
+    mentionUsers,
+    online,
+    mentionQuery || "",
+  );
+  const updateMention = (value: string, caret: number) => {
+    const match = value.slice(0, caret).match(/(?:^|\s)@([^\s@]*)$/);
+    setMentionQuery(match ? match[1] : null);
+    setMentionIndex(0);
+  };
+  const insertMention = (option: MentionOption) => {
+    const input = composerInput.current;
+    const caret = input?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    const match = before.match(/(?:^|\s)@([^\s@]*)$/);
+    const start = match ? caret - match[1].length - 1 : caret;
+    const inserted = `@${option.token} `;
+    const next = text.slice(0, start) + inserted + text.slice(caret);
+    setText(next);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      input?.focus();
+      const nextCaret = start + inserted.length;
+      input?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
   const changeChannel = (id: string) => {
     setActive(id);
     setThread(null);
     setText("");
     setAttachment(null);
     setMediaPicker(null);
+    setMentionQuery(null);
     setSearch("");
     setMobile(false);
     setTyping("");
@@ -553,11 +615,56 @@ export default function Page() {
   };
   const reactTo = async (m: Message, emoji: string) => {
     setReactionTarget(null);
-    await act(async () => {
-      const updated = await api("messages/" + m.id, {emoji, active: !m.reactions[emoji]?.includes(ws!.user.id)}, "PATCH");
-      setWs(current => current ? {...current, messages: current.messages.map(x => x.id === updated.id ? updated : x)} : current);
-      await refresh();
-    });
+    if (!ws) return;
+    const active = !m.reactions[emoji]?.includes(ws.user.id);
+    const optimistic: Message = {
+      ...m,
+      reactions: {
+        ...m.reactions,
+        [emoji]: active
+          ? [...new Set([...(m.reactions[emoji] || []), ws.user.id])]
+          : (m.reactions[emoji] || []).filter((id) => id !== ws.user.id),
+      },
+    };
+    setWs((current) =>
+      current
+        ? {
+            ...current,
+            messages: current.messages.map((item) =>
+              item.id === m.id ? optimistic : item,
+            ),
+          }
+        : current,
+    );
+    try {
+      const updated = await api(
+        "messages/" + m.id,
+        { emoji, active },
+        "PATCH",
+      );
+      setWs((current) =>
+        current
+          ? {
+              ...current,
+              messages: current.messages.map((item) =>
+                item.id === updated.id ? updated : item,
+              ),
+            }
+          : current,
+      );
+    } catch (reactionError) {
+      setWs((current) =>
+        current
+          ? {
+              ...current,
+              messages: current.messages.map((item) =>
+                item.id === m.id ? m : item,
+              ),
+            }
+          : current,
+      );
+      setError((reactionError as Error).message);
+    }
   };
   const renderMessage = (m: Message) => {
     const author = user(m.userId),
@@ -578,7 +685,7 @@ export default function Page() {
             {m.delivery === "sending" && <small role="status"><LoaderCircle className="spinner" size={12}/> Đang gửi…</small>}
             {m.delivery === "failed" && <button className="retry-message" disabled={sending} onClick={() => deliver(m)}>Gửi thất bại · Thử lại</button>}
           </div>
-          <p>{m.text}</p>
+          <p>{renderMessageText(m.text)}</p>
           {m.attachment && (
             <a href={m.attachment.data} target="_blank" rel="noreferrer">
               <img
@@ -1154,6 +1261,14 @@ export default function Page() {
             </div>
             {view === "home" && (
               <div className="composer-area">
+                {mentionQuery !== null && (
+                  <MentionPicker
+                    options={mentionOptions}
+                    activeIndex={mentionIndex}
+                    onActiveIndex={setMentionIndex}
+                    onSelect={insertMention}
+                  />
+                )}
                 {mediaPicker && <MediaPicker key={mediaPicker} initialTab={mediaPicker} onClose={()=>setMediaPicker(null)} onEmoji={emoji=>{const input=composerInput.current;const start=input?.selectionStart??text.length;const end=input?.selectionEnd??text.length;setText(text.slice(0,start)+emoji+text.slice(end));setMediaPicker(null);requestAnimationFrame(()=>{input?.focus();input?.setSelectionRange(start+emoji.length,start+emoji.length);});}} onGif={gif=>{setAttachment({name:gif.name+'.gif',data:gif.url,gifId:gif.id});setMediaPicker(null);composerInput.current?.focus();}}/>}
                 <div
                   className="composer"
@@ -1183,9 +1298,36 @@ export default function Page() {
                     maxLength={5000}
                     onChange={(e) => {
                       setText(e.target.value);
+                      updateMention(e.target.value, e.target.selectionStart);
                       socket.current?.emit("typing", channel?.id);
                     }}
                     onKeyDown={(e) => {
+                      if (mentionQuery !== null) {
+                        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                          e.preventDefault();
+                          const direction = e.key === "ArrowDown" ? 1 : -1;
+                          setMentionIndex((index) =>
+                            mentionOptions.length
+                              ? (index + direction + mentionOptions.length) %
+                                mentionOptions.length
+                              : 0,
+                          );
+                          return;
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setMentionQuery(null);
+                          return;
+                        }
+                        if (
+                          (e.key === "Enter" || e.key === "Tab") &&
+                          mentionOptions[mentionIndex]
+                        ) {
+                          e.preventDefault();
+                          insertMention(mentionOptions[mentionIndex]);
+                          return;
+                        }
+                      }
                       if (
                         e.key === "Enter" &&
                         !e.shiftKey &&
@@ -1223,7 +1365,20 @@ export default function Page() {
                     <button title="Chọn GIF" className="gif-button" onClick={()=>setMediaPicker(mediaPicker === "gif" ? null : "gif")}>GIF</button>
                     <button
                       title="Nhắc tên"
-                      onClick={() => setText(text + " @")}
+                      onClick={() => {
+                        const input = composerInput.current;
+                        const caret = input?.selectionStart ?? text.length;
+                        const prefix = caret && !/\s$/.test(text.slice(0, caret)) ? " @" : "@";
+                        const next = text.slice(0, caret) + prefix + text.slice(caret);
+                        setText(next);
+                        setMentionQuery("");
+                        setMentionIndex(0);
+                        requestAnimationFrame(() => {
+                          input?.focus();
+                          const nextCaret = caret + prefix.length;
+                          input?.setSelectionRange(nextCaret, nextCaret);
+                        });
+                      }}
                     >
                       <span className="at">@</span>
                     </button>
@@ -1509,11 +1664,19 @@ export default function Page() {
           </section>
         </div>
       )}
-      {reactionTarget && <div className="reaction-overlay" onClick={() => setReactionTarget(null)} onKeyDown={e => {if(e.key === "Escape")setReactionTarget(null);}}>
-        <div onClick={e => e.stopPropagation()}>
-          <MediaPicker initialTab="emoji" emojiOnly onEmoji={emoji => reactTo(reactionTarget, emoji)} onGif={() => {}} onClose={() => setReactionTarget(null)}/>
+      {reactionTarget && (
+        <div
+          className="reaction-overlay"
+          onClick={() => setReactionTarget(null)}
+        >
+          <div onClick={(event) => event.stopPropagation()}>
+            <ReactionPicker
+              onPick={(emoji) => reactTo(reactionTarget, emoji)}
+              onClose={() => setReactionTarget(null)}
+            />
+          </div>
         </div>
-      </div>}
+      )}
       {busy && <div className="operation-status" role="status"><LoaderCircle className="spinner" size={16}/> Đang xử lý…</div>}
       {call && (
         <div className="call-backdrop">

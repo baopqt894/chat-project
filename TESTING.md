@@ -63,3 +63,6 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Playwright mạng giả lập chậm 1,8s: tin hiện sau 60ms, lỗi 503 có thử lại; tải lại vẫn chỉ một tin; tạo kênh có loading và khóa nút.
 - Reaction dùng bộ 64 emoji, hiển thị số lượt, trạng thái của bạn và tên người thả; API cho phép đặt active true/false để tránh đếm sai khi lặp request.
 - Outbox hiện lưu trong phiên trang, chưa lưu offline qua reload.
+- Reaction có thanh chọn nhanh 7 emoji, nút mở bảng đầy đủ 64 emoji, animation nhẹ và cập nhật lạc quan để bỏ độ trễ tải lại workspace.
+- Composer hỗ trợ autocomplete khi gõ hoặc bấm `@`: chỉ liệt kê thành viên có quyền xem cuộc trò chuyện, kèm `@everyone`, `@here`, `@channel`; hỗ trợ lọc và điều khiển bằng phím.
+- Mention hợp lệ được tô màu trong nội dung tin nhắn ở cả giao diện sáng và tối.
