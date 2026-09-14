@@ -60,6 +60,22 @@ test("Mongo persistence, concurrent writes, polling signals and authenticated at
     const w = await req("workspace", undefined, a.cookie);
     assert.equal(w.data.transport, "polling");
     assert.equal(w.data.user.role, "owner");
+    const retries = await Promise.all(Array.from({length: 3}, () => req("messages", {
+      channelId:"general", text:"Retry once", clientMessageId:"retry-test-123"
+    }, a.cookie)));
+    assert.ok(retries.every(r => [200,201].includes(r.status)));
+    assert.equal(new Set(retries.map(r => r.data.id)).size, 1);
+    const reactionPath = "messages/" + retries[0].data.id;
+    const reacted = await req(reactionPath, {emoji:"😂",active:true}, b.cookie, "PATCH");
+    assert.equal(reacted.status, 200);
+    assert.deepEqual(reacted.data.reactions["😂"], ["linh"]);
+    const repeated = await req(reactionPath, {emoji:"😂",active:true}, b.cookie, "PATCH");
+    assert.deepEqual(repeated.data.reactions["😂"], ["linh"]);
+    const removedReaction = await req(reactionPath, {emoji:"😂",active:false}, b.cookie, "PATCH");
+    assert.deepEqual(removedReaction.data.reactions["😂"], []);
+    assert.equal((await req(reactionPath, {emoji:"invalid"}, b.cookie, "PATCH")).status, 400);
+    const retryState = await req("workspace", undefined, a.cookie);
+    assert.equal(retryState.data.messages.filter(m => m.clientMessageId === "retry-test-123").length, 1);
     const results = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
         req(

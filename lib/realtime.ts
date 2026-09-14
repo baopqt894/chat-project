@@ -32,7 +32,8 @@ export function connectRealtime(
     );
   }
   async function poll() {
-    let delay = 1000;
+    const started = Date.now();
+    let delay = document.hidden ? 3000 : 750;
     try {
       const data = await request({ clientId, since });
       if (stopped) return;
@@ -64,7 +65,7 @@ export function connectRealtime(
       }
       delay = 3000;
     }
-    if (!stopped) timer = setTimeout(poll, delay);
+    if (!stopped) timer = setTimeout(poll, Math.max(100, delay - (Date.now() - started)));
   }
   const adapter = {
     on(event: string, handler: Handler) {

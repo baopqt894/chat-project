@@ -53,3 +53,13 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - API kiểm tra gifId thuộc danh mục, từ chối đường dẫn tùy ý; GIF được lưu dưới dạng tham chiếu asset, không nhân bản binary trong MongoDB.
 - Bộ chọn gồm 64 emoji và 8 GIF Noto được đóng gói sẵn, có ghi công CC BY 4.0.
 - Browser: tìm emoji không dấu, chèn và gửi; tìm GIF, chọn preview, gửi GIF, reload vẫn thấy ảnh; kiểm tra mobile không tràn ngang. Đã pass. Đã sửa nhãn accessibility bị đọc lặp của GIF picker.
+
+## Cập nhật gửi nhanh và loading
+- Tin mới hiện ngay trong outbox với trạng thái Đang gửi; lỗi có nút Thử lại.
+- clientMessageId chống tạo trùng khi retry, kể cả nhiều request đồng thời (test MongoDB).
+- Vercel polling chu kỳ tối thiểu 750ms khi tab hiện, 3s khi ẩn; không nối lại khi đổi kênh. Đây vẫn là polling, độ trễ nhận phụ thuộc mạng/server.
+- Tạo kênh/nhóm, DM, chỉnh sửa/xóa có trạng thái xử lý và chặn submit lặp; quản lý thành viên/role có spinner.
+- Lint, production build và 3 integration suites đều pass.
+- Playwright mạng giả lập chậm 1,8s: tin hiện sau 60ms, lỗi 503 có thử lại; tải lại vẫn chỉ một tin; tạo kênh có loading và khóa nút.
+- Reaction dùng bộ 64 emoji, hiển thị số lượt, trạng thái của bạn và tên người thả; API cho phép đặt active true/false để tránh đếm sai khi lặp request.
+- Outbox hiện lưu trong phiên trang, chưa lưu offline qua reload.

@@ -5,6 +5,7 @@ import { connectRealtime, type RealtimeConnection } from "../lib/realtime";
 import { readApiResponse } from "../lib/http";
 import MediaPicker from "./media-picker";
 import {
+  LoaderCircle,
   Hash,
   Home,
   MessageCircle,
@@ -68,6 +69,8 @@ type Message = {
   attachment: Attachment | null;
   reactions: Record<string, string[]>;
   edited?: boolean;
+  clientMessageId?: string;
+  delivery?: "sending" | "failed";
 };
 type Workspace = {
   transport?: "socket" | "polling";
@@ -87,8 +90,9 @@ async function api(path: string, body?: unknown, method = "POST") {
   const r = await fetch(
     "/api/" + path,
     body === undefined
-      ? {}
+      ? { signal: AbortSignal.timeout(30000) }
       : {
+          signal: AbortSignal.timeout(30000),
           method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -137,6 +141,16 @@ export default function Page() {
     [selected, setSelected] = useState<string[]>([]),
     [edit, setEdit] = useState<Message | null>(null),
     [editText, setEditText] = useState("");
+  const [reactionTarget, setReactionTarget] = useState<Message | null>(null);
+  const [outbox, setOutbox] = useState<Message[]>([]);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const sendRef = useRef(false);
+  const activeRef = useRef(active);
+  useEffect(() => { activeRef.current = active; }, [active]);
+  const allMessages = [...(ws?.messages || []), ...outbox.filter(m =>
+    m.userId === ws?.user.id && !ws?.messages.some(x => x.id === m.id || (m.clientMessageId && x.clientMessageId === m.clientMessageId))
+  )];
   const socket = useRef<RealtimeConnection | null>(null),
     end = useRef<HTMLDivElement>(null),
     fileInput = useRef<HTMLInputElement>(null),
@@ -161,6 +175,7 @@ export default function Page() {
     try {
       const data = await api("workspace");
       setWs(data);
+      setOutbox(items => items.filter(m => m.userId === data.user.id && !data.messages.some((x: Message) => x.id === m.id || (m.clientMessageId && x.clientMessageId === m.clientMessageId))));
     } catch (e) {
       if ((e as Error).message === "Vui lòng đăng nhập") setWs(null);
       else setError((e as Error).message);
@@ -186,7 +201,7 @@ export default function Page() {
     setCall(null);
     setMuted(false);
     setCameraOff(false);
-  }, []);
+  }, [setMuted, setCameraOff]);
   const updateCall = useCallback((c: NonNullable<typeof call>) => {
     callRef.current = c;
     setCall(c);
@@ -267,7 +282,7 @@ export default function Page() {
     const s = connectRealtime(ws.transport);
     socket.current = s;
     s.on("connect", () => {
-      void refresh();
+      if (ws.transport !== "polling") void refresh();
     });
     s.on("connect_error", (error: Error) => {
       setError(error.message || "Mất kết nối realtime. Đang thử lại…");
@@ -278,7 +293,7 @@ export default function Page() {
     });
     s.on("presence", setOnline);
     s.on("typing", ({ channelId, name }) => {
-      if (channelId === active) {
+      if (channelId === activeRef.current) {
         setTyping(name);
         if (typingTimer.current) clearTimeout(typingTimer.current);
         typingTimer.current = setTimeout(() => setTyping(""), 1800);
@@ -363,7 +378,6 @@ export default function Page() {
   }, [
     ws?.user.id,
     ws?.transport,
-    active,
     refresh,
     updateCall,
     setupPeer,
@@ -379,7 +393,7 @@ export default function Page() {
   );
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth" });
-  }, [ws?.messages.length, active]);
+  }, [ws?.messages.length, outbox.length, active]);
   useEffect(() => {
     if (!call || call.state === "connected" || call.state === "incoming")
       return;
@@ -408,11 +422,17 @@ export default function Page() {
     setView("home");
   };
   const act = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     setError("");
     try {
       await fn();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   };
   const login = async (e: React.FormEvent) => {
@@ -424,27 +444,45 @@ export default function Page() {
     });
     setAuthBusy(false);
   };
-  const send = async (parentId: string | null = null) => {
-    if (!channel || sending) return;
+  const deliver = async (draft: Message) => {
+    if (sendRef.current) return;
+    sendRef.current = true;
     setSending(true);
-    await act(async () => {
-      await api("messages", {
-        channelId: channel.id,
-        text: parentId ? reply : text,
-        parentId,
-        attachment: parentId || attachment?.gifId ? null : attachment,
-        gifId: parentId ? undefined : attachment?.gifId,
+    setError("");
+    setOutbox(items => [...items.filter(m => m.id !== draft.id), {...draft, delivery: "sending"}]);
+    try {
+      const result = await api("messages", {
+        channelId: draft.channelId, text: draft.text, parentId: draft.parentId,
+        clientMessageId: draft.clientMessageId,
+        attachment: draft.attachment?.gifId ? null : draft.attachment,
+        gifId: draft.attachment?.gifId,
       });
-      if (parentId) setReply("");
-      else {
-        setText("");
-        setAttachment(null);
-      }
-      await refresh();
-    });
-    setSending(false);
+      setOutbox(items => items.map(m => m.id === draft.id ? result : m));
+      void refresh();
+    } catch (e) {
+      setOutbox(items => items.map(m => m.id === draft.id ? {...m, delivery: "failed"} : m));
+      setError((e as Error).message);
+    } finally {
+      sendRef.current = false;
+      setSending(false);
+    }
+  };
+  const send = async (parentId: string | null = null) => {
+    if (!channel || !ws || sendRef.current) return;
+    const content = parentId ? reply : text;
+    const image = parentId ? null : attachment;
+    if (!content.trim() && !image) return;
+    const id = crypto.randomUUID();
+    const draft: Message = {id, clientMessageId: id, channelId: channel.id,
+      userId: ws.user.id, text: content, parentId, attachment: image,
+      createdAt: new Date().toISOString(), reactions: {}};
+    if (parentId) setReply("");
+    else { setText(""); setAttachment(null); }
+    await deliver(draft);
   };
   const startDM = async (id: string) => {
+    const existing = ws?.channels.find(c => c.kind === "dm" && c.members.includes(id));
+    if (existing) { changeChannel(existing.id); setModal(""); return; }
     await act(async () => {
       const c = await api("channels", {
         kind: "dm",
@@ -513,11 +551,19 @@ export default function Page() {
       signal: { type: "invite", video },
     });
   };
+  const reactTo = async (m: Message, emoji: string) => {
+    setReactionTarget(null);
+    await act(async () => {
+      const updated = await api("messages/" + m.id, {emoji, active: !m.reactions[emoji]?.includes(ws!.user.id)}, "PATCH");
+      setWs(current => current ? {...current, messages: current.messages.map(x => x.id === updated.id ? updated : x)} : current);
+      await refresh();
+    });
+  };
   const renderMessage = (m: Message) => {
     const author = user(m.userId),
-      replies = ws!.messages.filter((x) => x.parentId === m.id);
+      replies = allMessages.filter((x) => x.parentId === m.id);
     return (
-      <article className="message" key={m.id}>
+      <article className={"message " + (m.delivery ? "message-pending" : "")} key={m.id}>
         <Avatar user={author} />
         <div className="message-body">
           <div className="message-meta">
@@ -529,6 +575,8 @@ export default function Page() {
               })}
             </time>
             {m.edited && <small>đã chỉnh sửa</small>}
+            {m.delivery === "sending" && <small role="status"><LoaderCircle className="spinner" size={12}/> Đang gửi…</small>}
+            {m.delivery === "failed" && <button className="retry-message" disabled={sending} onClick={() => deliver(m)}>Gửi thất bại · Thử lại</button>}
           </div>
           <p>{m.text}</p>
           {m.attachment && (
@@ -547,12 +595,10 @@ export default function Page() {
                 <button
                   className={ids.includes(ws!.user.id) ? "reacted" : ""}
                   key={emoji}
-                  onClick={() =>
-                    act(async () => {
-                      await api("messages/" + m.id, { emoji }, "PATCH");
-                      await refresh();
-                    })
-                  }
+                  disabled={busy}
+                  aria-pressed={ids.includes(ws!.user.id)}
+                  title={ids.map(id => user(id)?.name || id).join(", ")}
+                  onClick={() => reactTo(m, emoji)}
                 >
                   {emoji} {ids.length}
                 </button>
@@ -569,15 +615,11 @@ export default function Page() {
             </button>
           )}
         </div>
-        <div className="message-actions">
+        <div className="message-actions" style={m.delivery ? {display:"none"} : undefined}>
           <button
-            title="Thích"
-            onClick={() =>
-              act(async () => {
-                await api("messages/" + m.id, { emoji: "👍" }, "PATCH");
-                await refresh();
-              })
-            }
+            title="Thả biểu cảm"
+            disabled={busy}
+            onClick={() => setReactionTarget(m)}
           >
             <Smile size={16} />
           </button>
@@ -770,7 +812,7 @@ export default function Page() {
         </div>
       </main>
     );
-  const messages = ws.messages.filter(
+  const messages = allMessages.filter(
     (m) =>
       (view === "saved"
         ? saved.includes(m.id)
@@ -1195,7 +1237,7 @@ export default function Page() {
                       disabled={sending || (!text.trim() && !attachment)}
                       onClick={() => send()}
                     >
-                      <Send size={18} />
+                      {sending ? <LoaderCircle className="spinner" size={18}/> : <Send size={18} />}
                       <span className="send-divider" />
                       <ChevronDown size={13} />
                     </button>
@@ -1228,7 +1270,7 @@ export default function Page() {
                 </button>
               </header>
               <div className="thread-messages">
-                {ws.messages
+                {allMessages
                   .filter((m) => m.id === thread || m.parentId === thread)
                   .map(renderMessage)}
               </div>
@@ -1244,7 +1286,7 @@ export default function Page() {
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                 />
-                <button className="primary" disabled={!reply.trim() || sending}>
+                <button className="primary" disabled={!reply.trim() || sending}>{sending && <LoaderCircle className="spinner" size={16}/>}
                   Gửi phản hồi <Send size={15} />
                 </button>
               </form>
@@ -1326,7 +1368,7 @@ export default function Page() {
                   />
                 </label>
                 {kind === "group" && <><p className="people-note">Bạn được thêm tự động làm người tạo nhóm. Chọn một hoặc nhiều đồng đội.</p><MemberPicker users={ws.users} excluded={[ws.user.id]} selected={selected} onChange={setSelected}/></>}
-                <button className="primary">
+                <button className="primary" disabled={busy} aria-busy={busy}>{busy && <LoaderCircle className="spinner" size={16}/>}
                   Tạo {kind === "channel" ? "kênh" : `nhóm (${selected.length + 1} người)`} <Plus size={16} />
                 </button>
               </form>
@@ -1424,6 +1466,7 @@ export default function Page() {
                 <p>Tin nhắn và các phản hồi trong thread sẽ được xóa.</p>
                 <button
                   className="danger"
+                  disabled={busy}
                   onClick={() =>
                     act(async () => {
                       await api("messages/" + edit.id, {}, "DELETE");
@@ -1458,7 +1501,7 @@ export default function Page() {
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                 />
-                <button className="primary">
+                <button className="primary" disabled={busy} aria-busy={busy}>{busy && <LoaderCircle className="spinner" size={16}/>}
                   Lưu thay đổi <Check size={17} />
                 </button>
               </form>
@@ -1466,6 +1509,12 @@ export default function Page() {
           </section>
         </div>
       )}
+      {reactionTarget && <div className="reaction-overlay" onClick={() => setReactionTarget(null)} onKeyDown={e => {if(e.key === "Escape")setReactionTarget(null);}}>
+        <div onClick={e => e.stopPropagation()}>
+          <MediaPicker initialTab="emoji" emojiOnly onEmoji={emoji => reactTo(reactionTarget, emoji)} onGif={() => {}} onClose={() => setReactionTarget(null)}/>
+        </div>
+      </div>}
+      {busy && <div className="operation-status" role="status"><LoaderCircle className="spinner" size={16}/> Đang xử lý…</div>}
       {call && (
         <div className="call-backdrop">
           <section className="call-card">

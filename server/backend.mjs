@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { Server } from "socket.io";
-import { BUILTIN_GIFS } from "../lib/chat-media.mjs";
+import { BUILTIN_GIFS, EMOJI_GROUPS } from "../lib/chat-media.mjs";
 
 export function backend(
   server,
@@ -446,6 +446,10 @@ export function backend(
       }
       if (path === "/api/messages" && method === "POST") {
         if (!access(body.channelId, u)) fail("Không có quyền truy cập", 403);
+        const clientMessageId = body.clientMessageId;
+        if (clientMessageId !== undefined && (typeof clientMessageId !== "string" || !/^[a-zA-Z0-9-]{1,80}$/.test(clientMessageId))) fail("Mã tin nhắn không hợp lệ");
+        const existing = clientMessageId && db.messages.find(m => m.userId === u.id && m.channelId === body.channelId && m.clientMessageId === clientMessageId);
+        if (existing) { respond(res, 200, existing); return true; }
         const text = String(body.text || "").trim();
         if (text.length > 5000) fail("Tin nhắn tối đa 5000 ký tự");
         let attachment = null;
@@ -482,6 +486,7 @@ export function backend(
           fail("Thread không hợp lệ");
         const m = {
           id: randomUUID(),
+          ...(clientMessageId ? {clientMessageId} : {}),
           channelId: body.channelId,
           userId: u.id,
           text,
@@ -499,12 +504,12 @@ export function backend(
         const m = db.messages.find((m) => m.id === path.split("/")[3]);
         if (!m || !access(m.channelId, u)) fail("Không tìm thấy tin nhắn", 404);
         if (body.emoji) {
-          if (!["👍", "❤️", "🎉", "👀", "🙌"].includes(body.emoji))
+          if (!EMOJI_GROUPS.some(group => group.items.some(([emoji]) => emoji === body.emoji)))
             fail("Emoji không hợp lệ");
           const list = m.reactions[body.emoji] || [];
-          m.reactions[body.emoji] = list.includes(u.id)
-            ? list.filter((id) => id !== u.id)
-            : [...list, u.id];
+          if (body.active !== undefined && typeof body.active !== "boolean") fail("Trạng thái reaction không hợp lệ");
+          const active = body.active ?? !list.includes(u.id);
+          m.reactions[body.emoji] = active ? [...new Set([...list, u.id])] : list.filter(id => id !== u.id);
         } else {
           if (m.userId !== u.id) fail("Chỉ sửa tin nhắn của bạn", 403);
           if (!String(body.text || "").trim() || body.text.length > 5000)
