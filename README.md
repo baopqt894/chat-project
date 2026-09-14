@@ -12,7 +12,7 @@ npm run dev
 # http://localhost:3000
 ```
 
-Production local (server Node chạy liên tục, không phải static hosting/serverless):
+Production local (custom Node server + Socket.IO):
 
 ```bash
 npm run build
@@ -73,7 +73,7 @@ Khi tách NestJS: giữ contract, chuyển user/session/channel/message/attachme
 - Một workspace, một server, lưu JSON; ảnh base64 trong snapshot. Chưa có pagination, quản lý nhiều workspace,  push notification, password recovery/email verification hoặc upload object storage.
 - Chưa áp dụng rate limiting đăng nhập; không đưa nguyên bản demo công khai lên Internet với tài khoản seed.
 - WebRTC dùng STUN công khai. Localhost cho phép camera/mic; khi dùng IP LAN/domain cần HTTPS. Mạng NAT/firewall phức tạp cần TURN riêng. Chưa gọi nhóm, share screen hay ghi âm.
-- Chỉ hỗ trợ chạy Node server liên tục. Các thiết lập Cloudflare/vinext của website cũ đã gỡ.
+- Local dùng Node server + Socket.IO. Vercel dùng Route Handler + MongoDB + HTTP polling như hướng dẫn bên dưới.
 - Nếu reverse proxy HTTPS, đặt `COOKIE_SECURE=true` và proxy WebSocket upgrade.
 
 ## Kiểm thử
@@ -106,3 +106,38 @@ API mới:
 | PATCH | `/api/channels/:id/members` | `{ "add": ["user-id"], "remove": [], "managers": ["user-id"] }`; các field optional |
 
 `managers` thay thế danh sách quản lý và kiểm tra toàn bộ trước khi ghi; add/remove là thay đổi tăng/giảm, không ghi đè danh sách thành viên từ snapshot cũ.
+
+## Deploy Vercel — bắt buộc cấu hình MongoDB
+
+Lỗi `Unexpected token '<'` trước đây do `/api/workspace` trả 404 HTML: API chỉ nằm trong custom server, không có Next.js Route Handler. Bản sửa có `app/api/[...path]/route.ts`, Vercel tự build thành Function; không chạy `server/index.mjs` trên Vercel.
+
+1. Vercel → Project → Settings → Environment Variables: thêm **MONGODB_URI** ở Production (và Preview nếu muốn dùng preview). Database user cần quyền readWrite/createIndex trên database đích. Cho phép kết nối từ Vercel trong cấu hình network của MongoDB.
+2. **MONGODB_DB** tùy chọn, mặc định **gather_demo**. Nên dùng DB riêng cho demo này.
+3. Redeploy sau khi thêm/sửa environment variables. Framework Next.js, Build Command `npm run build`, Output Directory giữ mặc định.
+4. Kiểm tra `/api/workspace`: chưa login phải trả **401 JSON**, không còn 404 HTML. Nếu thiếu URI trả **503 JSON / DATABASE_NOT_CONFIGURED**, nếu kết nối database lỗi trả 503 JSON thông báo cấu hình.
+5. Đăng nhập các tài khoản demo ở trên. DB tự seed một lần; không copy file local lên Vercel. Tài khoản seed chỉ dành cho demo.
+
+Không commit URI hoặc file chứa credential. `.env.example` chỉ có placeholder.
+
+### Khác biệt giữa local và Vercel
+
+| Nội dung | Custom Node local | Vercel / Next server chuẩn |
+|---|---|---|
+| API | Custom HTTP handler | Next.js Route Handler |
+| Dữ liệu | `data/workspace.json` | MongoDB `workspaces`, `attachments` |
+| Cập nhật chat | Socket.IO push | HTTP polling khoảng 1 giây, revision chỉ fetch lại khi dữ liệu đổi |
+| Presence/typing/signaling | Socket.IO | MongoDB `presence`/`events`, TTL cleanup |
+| Gọi | WebRTC media trực tiếp | WebRTC media trực tiếp; signaling qua polling |
+| Ảnh | Tối đa 5MB, inline | Tối đa 2MB, collection riêng; download có kiểm tra session + membership |
+
+Bản Mongo demo vẫn dùng snapshot workspace (giới hạn metadata 3MB) và optimistic concurrency để tránh ghi đè giữa instance; ảnh tách riêng để không vượt response limit. Khi mở rộng cần tách collection entity, pagination và object storage. Presence có thể mất tối đa khoảng 15 giây để offline khi đóng trình duyệt. Polling không phải WebSocket và có độ trễ khoảng 1–3 giây; khi tab/background throttled có thể lâu hơn. WebRTC vẫn cần HTTPS và TURN cho mạng khó kết nối.
+
+### Kiểm thử đúng đường chạy Vercel ở local
+
+```bash
+npm run build
+node scripts/preview-cloud.mjs
+# http://localhost:3002 — MongoDB tạm, không đụng dữ liệu local/production
+```
+
+Hoặc đặt MONGODB_URI/MONGODB_DB trong môi trường rồi chạy `npx next start`. `npm test` có cả integration test Node/Socket.IO cũ và Route Handler/MongoDB mới; lần đầu có thể tải MongoDB binary dùng cho test.

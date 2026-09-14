@@ -14,10 +14,17 @@ import {
 import { resolve } from "node:path";
 import { Server } from "socket.io";
 
-export function backend(server, directory = process.env.DATA_DIR || "data") {
-  const dir = resolve(directory);
-  mkdirSync(dir, { recursive: true });
-  const file = resolve(dir, "workspace.json");
+export function backend(
+  server,
+  directory = process.env.DATA_DIR || "data",
+  options = {},
+) {
+  const file = options.apiOnly ? null : resolve(directory, "workspace.json");
+  if (file) mkdirSync(resolve(directory), { recursive: true });
+  let dirty = false;
+  const existing =
+    options.state ||
+    (file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null);
   const password = (value, salt = randomBytes(16).toString("hex")) =>
     `${salt}:${scryptSync(value, salt, 64).toString("hex")}`;
   const verify = (value, hash) => {
@@ -33,8 +40,8 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
     ["khoa", "Khoa Trần", "KT", "#718eb9"],
     ["ha", "Hà Phạm", "HP", "#ae829f"],
   ];
-  const db = existsSync(file)
-    ? JSON.parse(readFileSync(file, "utf8"))
+  const db = existing
+    ? existing
     : {
         users: people.map(([id, name, initials, color]) => ({
           id,
@@ -78,7 +85,7 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
         messages: [],
         sessions: [],
       };
-  if (!existsSync(file)) {
+  if (!existing) {
     const texts = [
       [
         "minh",
@@ -106,17 +113,23 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
     }));
   }
   // Migrate existing demo data without replacing users or conversations.
-  for (const user of db.users) user.role ??= user.id === 'minh' ? 'owner' : 'member';
-  if (!db.users.some(user => user.role === 'owner') && db.users[0]) db.users[0].role = 'owner';
+  for (const user of db.users)
+    user.role ??= user.id === "minh" ? "owner" : "member";
+  if (!db.users.some((user) => user.role === "owner") && db.users[0])
+    db.users[0].role = "owner";
   for (const channel of db.channels) {
     channel.ownerId ??= channel.members[0];
     channel.managers ??= [];
   }
   const save = () => {
-    writeFileSync(file + ".tmp", JSON.stringify(db, null, 2));
-    renameSync(file + ".tmp", file);
+    dirty = true;
+    if (file) {
+      writeFileSync(file + ".tmp", JSON.stringify(db, null, 2));
+      renameSync(file + ".tmp", file);
+    }
   };
-  save();
+  if (file) save();
+  dirty = false;
   const safe = (u) => {
     return {
       id: u.id,
@@ -141,7 +154,14 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
   };
   const access = (id, u) =>
     db.channels.find((c) => c.id === id && c.members.includes(u.id));
-  const io = new Server(server, { maxHttpBufferSize: 1e6 });
+  const io = options.apiOnly
+    ? {
+        emit() {},
+        use() {},
+        on() {},
+        sockets: { sockets: new Map() },
+      }
+    : new Server(server, { maxHttpBufferSize: 1e6 });
   const changed = () => {
     save();
     io.emit("refresh");
@@ -267,7 +287,7 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
           200,
           { user: safe(u) },
           {
-            "Set-Cookie": `session=${session.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${process.env.COOKIE_SECURE === "true" ? "; Secure" : ""}`,
+            "Set-Cookie": `session=${session.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${process.env.COOKIE_SECURE === "true" || process.env.VERCEL === "1" ? "; Secure" : ""}`,
           },
         );
         return true;
@@ -292,6 +312,8 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
       if (path === "/api/workspace" && method === "GET") {
         const channels = db.channels.filter((c) => c.members.includes(u.id));
         respond(res, 200, {
+          transport: options.apiOnly ? "polling" : "socket",
+          maxImageBytes: options.apiOnly ? 2 * 1024 * 1024 : 5 * 1024 * 1024,
           user: safe(u),
           users: db.users.map(safe),
           channels,
@@ -316,7 +338,8 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
               ];
         if (members.some((id) => !db.users.some((u) => u.id === id)))
           fail("Thành viên không hợp lệ");
-        if (kind === "group" && members.length < 2) fail("Chọn ít nhất một đồng đội vào nhóm");
+        if (kind === "group" && members.length < 2)
+          fail("Chọn ít nhất một đồng đội vào nhóm");
         if (kind === "dm" && members.length !== 2)
           fail("Chọn một người để nhắn riêng");
         let c =
@@ -354,35 +377,71 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
         respond(res, 201, c);
         return true;
       }
-      if (path.startsWith('/api/users/') && method === 'PATCH') {
-        if (u.role !== 'owner') fail('Chỉ Owner được thay đổi role workspace', 403);
-        const target = db.users.find(person => person.id === path.split('/')[3]);
-        if (!target) fail('Không tìm thấy thành viên', 404);
-        if (target.role === 'owner') fail('Không thể thay đổi Owner bằng thao tác này', 403);
-        if (!['admin','member'].includes(body.role)) fail('Role không hợp lệ');
+      if (path.startsWith("/api/users/") && method === "PATCH") {
+        if (u.role !== "owner")
+          fail("Chỉ Owner được thay đổi role workspace", 403);
+        const target = db.users.find(
+          (person) => person.id === path.split("/")[3],
+        );
+        if (!target) fail("Không tìm thấy thành viên", 404);
+        if (target.role === "owner")
+          fail("Không thể thay đổi Owner bằng thao tác này", 403);
+        if (!["admin", "member"].includes(body.role)) fail("Role không hợp lệ");
         target.role = body.role;
-        changed();respond(res,200,safe(target));return true;
+        changed();
+        respond(res, 200, safe(target));
+        return true;
       }
-      if (/^\/api\/channels\/[^/]+\/members$/.test(path) && method === 'PATCH') {
-        const c = access(path.split('/')[3],u);
-        if (!c) fail('Không có quyền truy cập nhóm',403);
-        if (c.kind !== 'group') fail('Chỉ nhóm riêng có danh sách thành viên tùy chọn');
-        const elevated = c.ownerId === u.id || ['owner','admin'].includes(u.role);
-        if (!elevated && !c.managers.includes(u.id)) fail('Bạn không có quyền quản lý nhóm',403);
-        const add = body.add ?? [], remove = body.remove ?? [];
-        if (!Array.isArray(add) || !Array.isArray(remove) || [...add,...remove].some(id=>typeof id !== 'string' || !db.users.some(person=>person.id===id))) fail('Danh sách thành viên không hợp lệ');
-        if (remove.includes(c.ownerId)) fail('Không thể xóa người tạo nhóm',403);
-        if (!elevated && remove.some(id=>c.managers.includes(id))) fail('Chỉ người tạo nhóm hoặc Admin được xóa quản lý',403);
-        const nextMembers = [...new Set([...c.members,...add])].filter(id=>!remove.includes(id));
-        if (nextMembers.length < 2) fail('Nhóm cần ít nhất hai thành viên');
-        let managers = c.managers.filter(id=>nextMembers.includes(id));
+      if (
+        /^\/api\/channels\/[^/]+\/members$/.test(path) &&
+        method === "PATCH"
+      ) {
+        const c = access(path.split("/")[3], u);
+        if (!c) fail("Không có quyền truy cập nhóm", 403);
+        if (c.kind !== "group")
+          fail("Chỉ nhóm riêng có danh sách thành viên tùy chọn");
+        const elevated =
+          c.ownerId === u.id || ["owner", "admin"].includes(u.role);
+        if (!elevated && !c.managers.includes(u.id))
+          fail("Bạn không có quyền quản lý nhóm", 403);
+        const add = body.add ?? [],
+          remove = body.remove ?? [];
+        if (
+          !Array.isArray(add) ||
+          !Array.isArray(remove) ||
+          [...add, ...remove].some(
+            (id) =>
+              typeof id !== "string" ||
+              !db.users.some((person) => person.id === id),
+          )
+        )
+          fail("Danh sách thành viên không hợp lệ");
+        if (remove.includes(c.ownerId))
+          fail("Không thể xóa người tạo nhóm", 403);
+        if (!elevated && remove.some((id) => c.managers.includes(id)))
+          fail("Chỉ người tạo nhóm hoặc Admin được xóa quản lý", 403);
+        const nextMembers = [...new Set([...c.members, ...add])].filter(
+          (id) => !remove.includes(id),
+        );
+        if (nextMembers.length < 2) fail("Nhóm cần ít nhất hai thành viên");
+        let managers = c.managers.filter((id) => nextMembers.includes(id));
         if (body.managers !== undefined) {
-          if (!elevated) fail('Chỉ người tạo nhóm hoặc Admin được phân quyền nhóm',403);
-          if (!Array.isArray(body.managers) || body.managers.some(id=>!nextMembers.includes(id) || id===c.ownerId)) fail('Quản lý phải là thành viên nhóm');
+          if (!elevated)
+            fail("Chỉ người tạo nhóm hoặc Admin được phân quyền nhóm", 403);
+          if (
+            !Array.isArray(body.managers) ||
+            body.managers.some(
+              (id) => !nextMembers.includes(id) || id === c.ownerId,
+            )
+          )
+            fail("Quản lý phải là thành viên nhóm");
           managers = [...new Set(body.managers)];
         }
-        c.members = nextMembers;c.managers = managers;
-        changed();respond(res,200,c);return true;
+        c.members = nextMembers;
+        c.managers = managers;
+        changed();
+        respond(res, 200, c);
+        return true;
       }
       if (path === "/api/messages" && method === "POST") {
         if (!access(body.channelId, u)) fail("Không có quyền truy cập", 403);
@@ -453,7 +512,8 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
       }
       if (path.startsWith("/api/messages/") && method === "DELETE") {
         const m = db.messages.find((m) => m.id === path.split("/")[3]);
-        if (!m || m.userId !== u.id) fail("Không có quyền xóa", 403);
+        if (!m || !access(m.channelId, u) || m.userId !== u.id)
+          fail("Không có quyền xóa", 403);
         db.messages = db.messages.filter(
           (x) => x.id !== m.id && x.parentId !== m.id,
         );
@@ -469,5 +529,5 @@ export function backend(server, directory = process.env.DATA_DIR || "data") {
     }
     return true;
   }
-  return { handler, io };
+  return { handler, io, state: db, isDirty: () => dirty, userFor, access };
 }

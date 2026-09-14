@@ -38,3 +38,12 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Browser (data QA riêng trên cổng 3001): mở danh bạ toàn workspace, đổi Linh thành Admin có xác nhận, tạo nhóm với hai người qua lọc Member, thêm Admin theo role, giao Khoa quản lý, xóa Hà, xác nhận số lượng cập nhật. Tất cả pass.
 - Đã kiểm tra desktop/mobile; mobile chuyển bảng thành từng khối thành viên để thao tác không bị khuất theo chiều ngang.
 - Dữ liệu QA của lần này tách hoàn toàn khỏi data demo cổng 3000. Dữ liệu cũ tự migrate role/ownerId/managers, không xóa tin nhắn.
+
+## Sửa deployment Vercel
+
+- Reproduce live: `https://chat-project-swart.vercel.app/api/workspace` trả HTTP 404, Content-Type text/html, body bắt đầu `<!DOCTYPE html>`.
+- Build mới có dynamic route `/api/[...path]`; không cần custom Node process trên Vercel.
+- `npm test`: 3 suite pass gồm local Socket.IO, JSON khi thiếu MongoDB config, và MongoDB tạm thực (không mock DB): seed/login, session persistence, 5 ghi đồng thời không mất tin, quyền role/nhóm, ảnh tách collection và auth download, signaling/typing/presence, logout, JSON lỗi hợp lệ.
+- Browser chạy Next.js chuẩn + MongoDB tạm tại cổng 3002: hai context đăng nhập Minh/Linh; chat tự cập nhật, ảnh tải thành công qua API có session, presence cả hai user, WebRTC hai đầu connected bằng audio/video giả lập và hangup truyền sang bên còn lại. Tất cả pass.
+- Chưa kiểm thử camera/mic vật lý, TURN và mạng ngoài. Vercel dùng HTTP polling khoảng 1 giây, không phải Socket.IO push.
+- Production cần `MONGODB_URI` do chủ dự án cung cấp; `MONGODB_DB` mặc định `gather_demo`. Phân biệt push code với deployment đã Ready và live API đã truy cập DB được.

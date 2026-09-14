@@ -1,7 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { io, Socket } from "socket.io-client";
+import { connectRealtime, type RealtimeConnection } from "../lib/realtime";
+import { readApiResponse } from "../lib/http";
 import {
   Hash,
   Home,
@@ -68,6 +69,8 @@ type Message = {
   edited?: boolean;
 };
 type Workspace = {
+  transport?: "socket" | "polling";
+  maxImageBytes?: number;
   user: User;
   users: User[];
   channels: Channel[];
@@ -90,9 +93,7 @@ async function api(path: string, body?: unknown, method = "POST") {
           body: JSON.stringify(body),
         },
   );
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "Không thể kết nối");
-  return data;
+  return readApiResponse(r);
 }
 function Avatar({ user, small = false }: { user?: User; small?: boolean }) {
   return (
@@ -134,7 +135,7 @@ export default function Page() {
     [selected, setSelected] = useState<string[]>([]),
     [edit, setEdit] = useState<Message | null>(null),
     [editText, setEditText] = useState("");
-  const socket = useRef<Socket | null>(null),
+  const socket = useRef<RealtimeConnection | null>(null),
     end = useRef<HTMLDivElement>(null),
     fileInput = useRef<HTMLInputElement>(null),
     typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -260,10 +261,14 @@ export default function Page() {
   }, [refresh]);
   useEffect(() => {
     if (!ws?.user.id) return;
-    const s = io();
+    const s = connectRealtime(ws.transport);
     socket.current = s;
     s.on("connect", () => {
       void refresh();
+    });
+    s.on("connect_error", (error: Error) => {
+      setError(error.message || "Mất kết nối realtime. Đang thử lại…");
+      if (error.message === "Vui lòng đăng nhập") { endCall(false); void refresh(); }
     });
     s.on("refresh", () => {
       void refresh();
@@ -354,6 +359,7 @@ export default function Page() {
     };
   }, [
     ws?.user.id,
+    ws?.transport,
     active,
     refresh,
     updateCall,
@@ -468,9 +474,9 @@ export default function Page() {
       !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(
         file.type,
       ) ||
-      file.size > 5 * 1024 * 1024
+      file.size > (ws?.maxImageBytes || 5 * 1024 * 1024)
     ) {
-      setError("Chọn ảnh PNG, JPG, WEBP hoặc GIF, tối đa 5MB.");
+      setError(`Chọn ảnh PNG, JPG, WEBP hoặc GIF, tối đa ${(ws?.maxImageBytes || 5 * 1024 * 1024) / 1024 / 1024}MB.`);
       return;
     }
     const reader = new FileReader();
