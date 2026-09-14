@@ -141,3 +141,9 @@ node scripts/preview-cloud.mjs
 ```
 
 Hoặc đặt MONGODB_URI/MONGODB_DB trong môi trường rồi chạy `npx next start`. `npm test` có cả integration test Node/Socket.IO cũ và Route Handler/MongoDB mới; lần đầu có thể tải MongoDB binary dùng cho test.
+
+## Emoji và GIF mặc định
+
+Nút mặt cười trong composer mở 64 emoji chia theo nhóm và tìm kiếm tiếng Việt/không dấu. Nút GIF mở 8 Animated Noto Emoji đóng gói trong `public/gifs`, không yêu cầu API key. Chọn GIF chỉ thêm bản xem trước; bấm Gửi để chia sẻ. API nhận `gifId` thuộc danh mục `lib/chat-media.mjs`, không nhận URL GIF tùy ý.
+
+Các GIF của Google dùng giấy phép CC BY 4.0; ghi công và link nguồn nằm trong bộ chọn và `public/gifs/NOTICE.md`.

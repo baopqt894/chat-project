@@ -1,0 +1,12 @@
+'use client';
+/* eslint-disable @next/next/no-img-element */
+import {useState} from 'react';
+import {X,Search} from 'lucide-react';
+import {BUILTIN_GIFS,EMOJI_GROUPS} from '../lib/chat-media.mjs';
+const normalize=(text:string)=>text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase();
+export default function MediaPicker({initialTab,onEmoji,onGif,onClose}:{initialTab:'emoji'|'gif';onEmoji:(emoji:string)=>void;onGif:(gif:typeof BUILTIN_GIFS[number])=>void;onClose:()=>void}){
+ const [tab,setTab]=useState(initialTab),[query,setQuery]=useState('');const q=normalize(query);
+ const emojis=EMOJI_GROUPS.map(group=>({...group,items:group.items.filter(([emoji,label])=>normalize(label+' '+emoji).includes(q))})).filter(group=>group.items.length);
+ const gifs=BUILTIN_GIFS.filter(gif=>normalize(gif.name+' '+gif.tags).includes(q));
+ return <section className="media-picker" role="dialog" aria-label="Emoji và GIF"><header><div role="tablist" aria-label="Loại biểu cảm"><button type="button" role="tab" aria-selected={tab==='emoji'} onClick={()=>setTab('emoji')}>Emoji <span>64</span></button><button type="button" role="tab" aria-selected={tab==='gif'} onClick={()=>setTab('gif')}>GIF <span>8</span></button></div><button type="button" title="Đóng bộ biểu cảm" onClick={onClose}><X size={18}/></button></header><label className="media-search"><Search size={15}/><input autoFocus aria-label="Tìm emoji hoặc GIF" placeholder={tab==='gif'?'Tìm GIF: chào, cà phê, chúc mừng…':'Tìm emoji: vui, cảm ơn, hoàn thành…'} value={query} onChange={e=>setQuery(e.target.value)}/></label><div className="media-options">{tab==='emoji'?emojis.map(group=><div key={group.name}><h4>{group.name}</h4><div className="emoji-grid">{group.items.map(([emoji,label])=><button type="button" key={emoji} title={label} aria-label={label} onClick={()=>onEmoji(emoji)}>{emoji}</button>)}</div></div>):<div className="gif-grid">{gifs.map(gif=><button type="button" key={gif.id} title={gif.name} onClick={()=>onGif(gif)}><img src={gif.url} alt="" loading="lazy"/><span>{gif.name}</span></button>)}</div>}{!(tab==='emoji'?emojis.length:gifs.length)&&<p className="empty">Không tìm thấy biểu cảm phù hợp.</p>}</div><footer>{tab==='emoji'?'Chọn để chèn vào tin nhắn.':'Chọn GIF rồi bấm Gửi để chia sẻ.'}{tab==='gif'&&<a href="/gifs/NOTICE.md" target="_blank" rel="noreferrer">Animated Noto Emoji · Google · CC BY 4.0</a>}</footer></section>;
+}

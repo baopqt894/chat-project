@@ -185,14 +185,18 @@ async function realtime(db, engine, request, raw, revision) {
 }
 // All mutations use compare-and-swap so two Vercel instances cannot overwrite each other.
 export async function cloudRequest(request, injectedDatabase) {
+  let stage = "request";
   try {
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
     if (origin && new URL(origin).host !== url.host)
       return json(403, { error: "Origin không hợp lệ" });
     const raw = await readBody(request);
+    stage = "database-connect";
     const db = injectedDatabase || (await database());
+    stage = "database-indexes";
     await prepare(db);
+    stage = "workspace";
     const collection = db.collection("workspaces");
     let doc = await collection.findOne({ _id: "default" });
     if (!doc) {
@@ -275,12 +279,15 @@ export async function cloudRequest(request, injectedDatabase) {
     console.error("Gather API failure", {
       name: e.name,
       code: e.code || "UNKNOWN",
+      stage,
     });
     return json(e.status || 503, {
       error: e.status
         ? e.message
         : "Không kết nối được database. Kiểm tra MONGODB_URI và quyền truy cập mạng của MongoDB.",
-      code: e.code === "DATABASE_NOT_CONFIGURED" ? e.code : "API_UNAVAILABLE",
+      code: e.code === "DATABASE_NOT_CONFIGURED" ? e.code : e.name === "MongoParseError" ? "DATABASE_URI_INVALID" : e.code === 18 || e.code === 8000 ? "DATABASE_AUTH_FAILED" : e.name === "MongoServerSelectionError" ? "DATABASE_UNREACHABLE" : "API_UNAVAILABLE",
+      stage,
+      errorType: ["MongoParseError", "MongoServerSelectionError", "MongoServerError", "TypeError", "Error"].includes(e.name) ? e.name : "Error",
     });
   }
 }

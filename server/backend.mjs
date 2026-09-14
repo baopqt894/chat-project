@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { Server } from "socket.io";
+import { BUILTIN_GIFS } from "../lib/chat-media.mjs";
 
 export function backend(
   server,
@@ -448,6 +449,11 @@ export function backend(
         const text = String(body.text || "").trim();
         if (text.length > 5000) fail("Tin nhắn tối đa 5000 ký tự");
         let attachment = null;
+        if (body.gifId !== undefined) {
+          const gif = BUILTIN_GIFS.find(item => item.id === body.gifId);
+          if (!gif || body.attachment) fail('GIF không hợp lệ');
+          attachment = {name:gif.name + '.gif',data:gif.url};
+        }
         if (body.attachment) {
           const a = body.attachment;
           if (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { connectRealtime, type RealtimeConnection } from "../lib/realtime";
 import { readApiResponse } from "../lib/http";
+import MediaPicker from "./media-picker";
 import {
   Hash,
   Home,
@@ -56,7 +57,7 @@ type Channel = {
   ownerId: string;
   managers: string[];
 };
-type Attachment = { name: string; data: string };
+type Attachment = { name: string; data: string; gifId?: string };
 type Message = {
   id: string;
   channelId: string;
@@ -122,6 +123,7 @@ export default function Page() {
     [modal, setModal] = useState(""),
     [mobile, setMobile] = useState(false),
     [tab, setTab] = useState("messages"),
+    [mediaPicker, setMediaPicker] = useState<"emoji" | "gif" | null>(null),
     [saved, setSaved] = useState<string[]>([]),
     [view, setView] = useState("home");
   const [register, setRegister] = useState(false),
@@ -138,6 +140,7 @@ export default function Page() {
   const socket = useRef<RealtimeConnection | null>(null),
     end = useRef<HTMLDivElement>(null),
     fileInput = useRef<HTMLInputElement>(null),
+    composerInput = useRef<HTMLTextAreaElement>(null),
     typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [call, setCall] = useState<{
       peer: string;
@@ -242,7 +245,7 @@ export default function Page() {
         event.preventDefault();
         document.querySelector<HTMLInputElement>('.global-search input')?.focus();
       }
-      if (event.key === 'Escape') { setModal(''); setEdit(null); setMobile(false); }
+      if (event.key === 'Escape') { setModal(''); setEdit(null); setMobile(false); setMediaPicker(null); }
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
@@ -397,6 +400,7 @@ export default function Page() {
     setThread(null);
     setText("");
     setAttachment(null);
+    setMediaPicker(null);
     setSearch("");
     setMobile(false);
     setTyping("");
@@ -428,7 +432,8 @@ export default function Page() {
         channelId: channel.id,
         text: parentId ? reply : text,
         parentId,
-        attachment: parentId ? null : attachment,
+        attachment: parentId || attachment?.gifId ? null : attachment,
+        gifId: parentId ? undefined : attachment?.gifId,
       });
       if (parentId) setReply("");
       else {
@@ -1107,6 +1112,7 @@ export default function Page() {
             </div>
             {view === "home" && (
               <div className="composer-area">
+                {mediaPicker && <MediaPicker key={mediaPicker} initialTab={mediaPicker} onClose={()=>setMediaPicker(null)} onEmoji={emoji=>{const input=composerInput.current;const start=input?.selectionStart??text.length;const end=input?.selectionEnd??text.length;setText(text.slice(0,start)+emoji+text.slice(end));setMediaPicker(null);requestAnimationFrame(()=>{input?.focus();input?.setSelectionRange(start+emoji.length,start+emoji.length);});}} onGif={gif=>{setAttachment({name:gif.name+'.gif',data:gif.url,gifId:gif.id});setMediaPicker(null);composerInput.current?.focus();}}/>}
                 <div
                   className="composer"
                   onDragOver={(e) => e.preventDefault()}
@@ -1128,6 +1134,7 @@ export default function Page() {
                     </div>
                   )}
                   <textarea
+                    ref={composerInput}
                     aria-label="Soạn tin nhắn"
                     placeholder={`Nhắn tin ${channel?.kind === "dm" ? "cho" : "đến #"} ${channel && title(channel)}`}
                     value={text}
@@ -1167,10 +1174,11 @@ export default function Page() {
                     </button>
                     <button
                       title="Thêm emoji"
-                      onClick={() => setText(text + " 😊")}
+                      onClick={() => setMediaPicker(mediaPicker === "emoji" ? null : "emoji")}
                     >
                       <Smile size={19} />
                     </button>
+                    <button title="Chọn GIF" className="gif-button" onClick={()=>setMediaPicker(mediaPicker === "gif" ? null : "gif")}>GIF</button>
                     <button
                       title="Nhắc tên"
                       onClick={() => setText(text + " @")}

@@ -76,6 +76,9 @@ test("Mongo persistence, concurrent writes, polling signals and authenticated at
         .length,
       5,
     );
+    const gif = await req('messages',{channelId:'general',gifId:'wave'},a.cookie);
+    assert.equal(gif.status,201);assert.equal(gif.data.attachment.data,'/gifs/wave.gif');
+    assert.equal((await req('messages',{channelId:'general',gifId:'../../private'},a.cookie)).status,400);
     const group = await req(
       "channels",
       { name: "Private", kind: "group", members: ["linh"] },

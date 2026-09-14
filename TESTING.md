@@ -47,3 +47,9 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Browser chạy Next.js chuẩn + MongoDB tạm tại cổng 3002: hai context đăng nhập Minh/Linh; chat tự cập nhật, ảnh tải thành công qua API có session, presence cả hai user, WebRTC hai đầu connected bằng audio/video giả lập và hangup truyền sang bên còn lại. Tất cả pass.
 - Chưa kiểm thử camera/mic vật lý, TURN và mạng ngoài. Vercel dùng HTTP polling khoảng 1 giây, không phải Socket.IO push.
 - Production cần `MONGODB_URI` do chủ dự án cung cấp; `MONGODB_DB` mặc định `gather_demo`. Phân biệt push code với deployment đã Ready và live API đã truy cập DB được.
+
+## Emoji/GIF mặc định
+
+- API kiểm tra gifId thuộc danh mục, từ chối đường dẫn tùy ý; GIF được lưu dưới dạng tham chiếu asset, không nhân bản binary trong MongoDB.
+- Bộ chọn gồm 64 emoji và 8 GIF Noto được đóng gói sẵn, có ghi công CC BY 4.0.
+- Browser: tìm emoji không dấu, chèn và gửi; tìm GIF, chọn preview, gửi GIF, reload vẫn thấy ảnh; kiểm tra mobile không tràn ngang. Đã pass. Đã sửa nhãn accessibility bị đọc lặp của GIF picker.
