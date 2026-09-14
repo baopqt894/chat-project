@@ -136,6 +136,9 @@ export default function Page() {
     [mediaPicker, setMediaPicker] = useState<"emoji" | "gif" | null>(null),
     [mentionQuery, setMentionQuery] = useState<string | null>(null),
     [mentionIndex, setMentionIndex] = useState(0),
+    [transitioning, setTransitioning] = useState(false),
+    [dmQuery, setDmQuery] = useState(""),
+    [dmSelected, setDmSelected] = useState<string[]>([]),
     [saved, setSaved] = useState<string[]>([]),
     [view, setView] = useState("home");
   const [register, setRegister] = useState(false),
@@ -163,6 +166,7 @@ export default function Page() {
     end = useRef<HTMLDivElement>(null),
     fileInput = useRef<HTMLInputElement>(null),
     composerInput = useRef<HTMLTextAreaElement>(null),
+    transitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [call, setCall] = useState<{
       peer: string;
@@ -396,6 +400,7 @@ export default function Page() {
     () => () => {
       endCall(false);
       if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (transitionTimer.current) clearTimeout(transitionTimer.current);
     },
     [endCall],
   );
@@ -449,6 +454,29 @@ export default function Page() {
     online,
     mentionQuery || "",
   );
+  const filteredDmUsers =
+    ws?.users.filter(
+      (person) =>
+        person.id !== ws.user.id &&
+        `${person.name} ${person.email}`
+          .toLowerCase()
+          .includes(dmQuery.trim().toLowerCase()),
+    ) || [];
+  const openDmModal = () => {
+    setDmQuery("");
+    setDmSelected([]);
+    setModal("dm");
+  };
+  const toggleDmMember = (id: string) => {
+    setDmSelected((current) => {
+      if (current.includes(id)) return current.filter((item) => item !== id);
+      if (current.length >= 9) {
+        setError("Nhóm tin nhắn có tối đa 10 thành viên, gồm cả bạn.");
+        return current;
+      }
+      return [...current, id];
+    });
+  };
   const updateMention = (value: string, caret: number) => {
     const match = value.slice(0, caret).match(/(?:^|\s)@([^\s@]*)$/);
     setMentionQuery(match ? match[1] : null);
@@ -470,7 +498,13 @@ export default function Page() {
       input?.setSelectionRange(nextCaret, nextCaret);
     });
   };
+  const beginContentTransition = () => {
+    setTransitioning(true);
+    if (transitionTimer.current) clearTimeout(transitionTimer.current);
+    transitionTimer.current = setTimeout(() => setTransitioning(false), 220);
+  };
   const changeChannel = (id: string) => {
+    if (id !== channel?.id || view !== "home") beginContentTransition();
     setActive(id);
     setThread(null);
     setText("");
@@ -482,6 +516,16 @@ export default function Page() {
     setTyping("");
     setTab("messages");
     setView("home");
+  };
+  const changeTab = (nextTab: string) => {
+    if (nextTab === tab) return;
+    beginContentTransition();
+    setTab(nextTab);
+  };
+  const changeView = (nextView: string) => {
+    if (nextView === view) return;
+    beginContentTransition();
+    setView(nextView);
   };
   const act = async (fn: () => Promise<void>) => {
     if (busyRef.current) return;
@@ -554,6 +598,31 @@ export default function Page() {
       await refresh();
       changeChannel(c.id);
       setModal("");
+    });
+  };
+  const createConversation = async () => {
+    if (!ws || !dmSelected.length || dmSelected.length > 9) return;
+    if (dmSelected.length === 1) {
+      await startDM(dmSelected[0]);
+      setDmQuery("");
+      setDmSelected([]);
+      return;
+    }
+    await act(async () => {
+      const selectedNames = dmSelected
+        .map((id) => ws.users.find((person) => person.id === id)?.name)
+        .filter(Boolean);
+      const c = await api("channels", {
+        kind: "group",
+        members: dmSelected,
+        name: selectedNames.join(", ").slice(0, 60),
+        description: "Nhóm tin nhắn riêng",
+      });
+      await refresh();
+      changeChannel(c.id);
+      setModal("");
+      setDmQuery("");
+      setDmSelected([]);
     });
   };
   const create = async (e: React.FormEvent) => {
@@ -962,12 +1031,12 @@ export default function Page() {
         <div className="workspace-icon">G</div>
         <button
           className={view === "home" ? "rail-active" : ""}
-          onClick={() => setView("home")}
+          onClick={() => changeView("home")}
         >
           <Home />
           <span>Home</span>
         </button>
-        <button onClick={() => setModal("dm")}>
+        <button onClick={openDmModal}>
           <MessageCircle />
           <span>DMs</span>
         </button>
@@ -977,7 +1046,7 @@ export default function Page() {
         </button>
         <button
           className={view === "saved" ? "rail-active" : ""}
-          onClick={() => setView("saved")}
+          onClick={() => changeView("saved")}
         >
           <Bookmark />
           <span>Đã lưu</span>
@@ -997,7 +1066,7 @@ export default function Page() {
           <h2>
             Gather team <ChevronDown size={17} />
           </h2>
-          <button title="Tin nhắn mới" onClick={() => setModal("dm")}>
+          <button title="Tin nhắn mới" onClick={openDmModal}>
             <SquarePen size={20} />
           </button>
         </header>
@@ -1007,14 +1076,14 @@ export default function Page() {
         <div className="sidebar-shortcuts">
           <button
             onClick={() => {
-              setView("home");
+              changeView("home");
               setSearch("");
             }}
           >
             <MessageSquare size={17} />
             Tất cả tin nhắn
           </button>
-          <button onClick={() => setView("saved")}>
+          <button onClick={() => changeView("saved")}>
             <Bookmark size={17} />
             Tin nhắn đã lưu <span>{saved.length || ""}</span>
           </button>
@@ -1065,7 +1134,7 @@ export default function Page() {
             <ChevronDown size={14} />
             Tin nhắn trực tiếp
           </span>
-          <button title="Thêm tin nhắn riêng" onClick={() => setModal("dm")}>
+          <button title="Thêm tin nhắn riêng" onClick={openDmModal}>
             <Plus size={16} />
           </button>
         </div>
@@ -1101,7 +1170,7 @@ export default function Page() {
             <br />
             Biết đâu điều hay đang chờ.
           </p>
-          <button onClick={() => setModal("dm")}>
+          <button onClick={openDmModal}>
             Kết nối với đồng đội <ArrowUpRight size={14} />
           </button>
         </div>
@@ -1157,14 +1226,14 @@ export default function Page() {
         <div className="chat-tabs">
           <button
             className={tab === "messages" ? "current" : ""}
-            onClick={() => setTab("messages")}
+            onClick={() => changeTab("messages")}
           >
             <MessageSquare size={15} />
             Tin nhắn
           </button>
           <button
             className={tab === "files" ? "current" : ""}
-            onClick={() => setTab("files")}
+            onClick={() => changeTab("files")}
           >
             <Paperclip size={15} />
             Ảnh đã chia sẻ
@@ -1176,7 +1245,25 @@ export default function Page() {
         </div>
         <div className="conversation-layout">
           <div className="conversation">
-            <div className="messages-scroll">
+            <div
+              className={
+                "messages-scroll " + (transitioning ? "is-transitioning" : "")
+              }
+              aria-busy={transitioning}
+            >
+              {transitioning && (
+                <div className="content-skeleton" role="status" aria-label="Đang chuyển cuộc trò chuyện">
+                  {["short", "long", "medium"].map((size, index) => (
+                    <div className="skeleton-message" key={size}>
+                      <span className="skeleton-avatar" />
+                      <span className="skeleton-lines">
+                        <i />
+                        <i className={size} style={{ animationDelay: `${index * 70}ms` }} />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {view === "home" && !search && (
                 <div className="channel-intro">
                   <div className="intro-icon">
@@ -1468,7 +1555,14 @@ export default function Page() {
           }}
         >
           <section
-            className={"modal " + (["directory", "members", "create"].includes(modal) ? "people-modal" : "")}
+            className={
+              "modal " +
+              (["directory", "members", "create"].includes(modal)
+                ? "people-modal"
+                : modal === "dm"
+                  ? "dm-modal"
+                  : "")
+            }
             role="dialog"
             aria-modal="true"
             aria-label="Hộp thoại"
@@ -1479,6 +1573,8 @@ export default function Page() {
               onClick={() => {
                 setModal("");
                 setEdit(null);
+                setDmQuery("");
+                setDmSelected([]);
               }}
             >
               <X size={20} />
@@ -1530,44 +1626,88 @@ export default function Page() {
             ) : modal === "directory" || modal === "members" ? (
               <PeopleManager key={modal + channel?.id} users={ws.users} current={ws.user} group={modal === "members" ? channel : undefined} online={online} onRefresh={refresh} onDM={startDM}/>
             ) : modal === "dm" ? (
-              <>
-                <h2>
-                  {modal === "dm" ? "Bắt đầu cuộc trò chuyện" : "Thành viên"}
-                </h2>
-                <p>
-                  {modal === "dm"
-                    ? "Chọn đồng đội để nhắn tin hoặc gọi trực tiếp."
-                    : "Những người cùng chia sẻ không gian này."}
-                </p>
-                <div className="member-list">
-                  {ws.users
-                    .filter((u) =>
-                      modal === "dm"
-                        ? u.id !== ws.user.id
-                        : channel?.members.includes(u.id),
-                    )
-                    .map((u) => (
-                      <button
-                        key={u.id}
-                        disabled={u.id === ws.user.id}
-                        onClick={() => startDM(u.id)}
-                      >
-                        <Avatar user={u} />
-                        <span>
-                          <strong>
-                            {u.name} {u.id === ws.user.id ? "(bạn)" : ""}
-                          </strong>
-                          <small>{u.email}</small>
-                        </span>
-                        <i
-                          className={
-                            online.includes(u.id) ? "online-dot" : "offline-dot"
-                          }
+              <div className="dm-dialog">
+                <header>
+                  <h2>Tin nhắn mới</h2>
+                  <p>Chọn một người để nhắn riêng hoặc nhiều người để tạo nhóm.</p>
+                </header>
+                {dmSelected.length > 0 && (
+                  <div className="dm-selected" aria-label="Thành viên đã chọn">
+                    {dmSelected.map((id) => {
+                      const person = ws.users.find((candidate) => candidate.id === id);
+                      return person ? (
+                        <button key={id} onClick={() => toggleDmMember(id)}>
+                          <Avatar user={person} small />
+                          {person.name}
+                          <X size={13} />
+                        </button>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+                <label className="dm-search">
+                  <Search size={17} />
+                  <input
+                    autoFocus
+                    aria-label="Tìm thành viên để nhắn tin"
+                    placeholder="Tìm theo tên hoặc email"
+                    value={dmQuery}
+                    onChange={(event) => setDmQuery(event.target.value)}
+                  />
+                  <span>{dmSelected.length}/9</span>
+                </label>
+                <small className="dm-help">
+                  Nhóm có tối đa 10 thành viên, gồm cả bạn.
+                </small>
+                <div className="dm-member-list">
+                  {filteredDmUsers.map((person) => {
+                    const checked = dmSelected.includes(person.id);
+                    return (
+                      <label className={checked ? "is-selected" : ""} key={person.id}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleDmMember(person.id)}
                         />
-                      </button>
-                    ))}
+                        <span className="dm-avatar-wrap">
+                          <Avatar user={person} />
+                          <i className={online.includes(person.id) ? "online-dot" : "offline-dot"} />
+                        </span>
+                        <span>
+                          <strong>{person.name}</strong>
+                          <small>{person.email.split("@")[0]}</small>
+                        </span>
+                        <span className="dm-check" aria-hidden="true">
+                          {checked && <Check size={15} />}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {!filteredDmUsers.length && (
+                    <div className="dm-empty">Không tìm thấy thành viên phù hợp.</div>
+                  )}
                 </div>
-              </>
+                <footer>
+                  <button
+                    type="button"
+                    className="dm-cancel"
+                    disabled={busy}
+                    onClick={() => setModal("")}
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={busy || !dmSelected.length}
+                    aria-busy={busy}
+                    onClick={() => void createConversation()}
+                  >
+                    {busy && <LoaderCircle className="spinner" size={16} />}
+                    {dmSelected.length > 1 ? "Tạo nhóm tin nhắn" : "Bắt đầu nhắn tin"}
+                  </button>
+                </footer>
+              </div>
             ) : modal === "account" ? (
               <>
                 <Avatar user={ws.user} />

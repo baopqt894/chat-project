@@ -66,3 +66,6 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Reaction có thanh chọn nhanh 7 emoji, nút mở bảng đầy đủ 64 emoji, animation nhẹ và cập nhật lạc quan để bỏ độ trễ tải lại workspace.
 - Composer hỗ trợ autocomplete khi gõ hoặc bấm `@`: chỉ liệt kê thành viên có quyền xem cuộc trò chuyện, kèm `@everyone`, `@here`, `@channel`; hỗ trợ lọc và điều khiển bằng phím.
 - Mention hợp lệ được tô màu trong nội dung tin nhắn ở cả giao diện sáng và tối.
+- Chuyển kênh, mục Đã lưu và tab Tin nhắn/Ảnh dùng skeleton 220ms cùng chuyển động opacity/transform; hiệu ứng tắt khi hệ điều hành bật giảm chuyển động.
+- Modal Tin nhắn mới theo kiểu Discord: tìm kiếm, checkbox, chip đã chọn, trạng thái online, footer cố định; 1 người tạo DM, 2-9 người cùng người hiện tại tạo nhóm riêng tối đa 10 thành viên.
+- Playwright đã xác nhận chọn hai thành viên tạo thành công nhóm 3 người và mở đúng cuộc trò chuyện; modal responsive thành bottom sheet trên viewport 390x844.
