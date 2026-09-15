@@ -69,3 +69,4 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Chuyển kênh, mục Đã lưu và tab Tin nhắn/Ảnh dùng skeleton 220ms cùng chuyển động opacity/transform; hiệu ứng tắt khi hệ điều hành bật giảm chuyển động.
 - Modal Tin nhắn mới theo kiểu Discord: tìm kiếm, checkbox, chip đã chọn, trạng thái online, footer cố định; 1 người tạo DM, 2-9 người cùng người hiện tại tạo nhóm riêng tối đa 10 thành viên.
 - Playwright đã xác nhận chọn hai thành viên tạo thành công nhóm 3 người và mở đúng cuộc trò chuyện; modal responsive thành bottom sheet trên viewport 390x844.
+- Toolbar tin nhắn được ghim bên trong góc phải, cách scrollbar 18-32px và không dùng vị trí âm. Playwright đo ở 1480/1100/768/390px: đủ 5 nút, không cắt mép trên/phải và không phát sinh overflow ngang.
