@@ -1,6 +1,12 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { connectRealtime, type RealtimeConnection } from "../lib/realtime";
 import { readApiResponse } from "../lib/http";
 import MediaPicker from "./media-picker";
@@ -152,13 +158,30 @@ export default function Page() {
     [selected, setSelected] = useState<string[]>([]),
     [edit, setEdit] = useState<Message | null>(null),
     [editText, setEditText] = useState("");
-  const [reactionTarget, setReactionTarget] = useState<Message | null>(null);
+  const [reactionTarget, setReactionTarget] = useState<{
+    message: Message;
+    left: number;
+    top: number;
+    panelMaxHeight: number;
+    placement: "up" | "down";
+  } | null>(null);
   const [outbox, setOutbox] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const sendRef = useRef(false);
   const activeRef = useRef(active);
   useEffect(() => { activeRef.current = active; }, [active]);
+  useEffect(() => {
+    if (!reactionTarget) return;
+    const closePicker = () => setReactionTarget(null);
+    const scrollArea = document.querySelector(".messages-scroll");
+    window.addEventListener("resize", closePicker);
+    scrollArea?.addEventListener("scroll", closePicker);
+    return () => {
+      window.removeEventListener("resize", closePicker);
+      scrollArea?.removeEventListener("scroll", closePicker);
+    };
+  }, [reactionTarget]);
   const allMessages = [...(ws?.messages || []), ...outbox.filter(m =>
     m.userId === ws?.user.id && !ws?.messages.some(x => x.id === m.id || (m.clientMessageId && x.clientMessageId === m.clientMessageId))
   )];
@@ -735,6 +758,40 @@ export default function Page() {
       setError((reactionError as Error).message);
     }
   };
+  const openReactionPicker = (
+    message: Message,
+    button: HTMLButtonElement,
+  ) => {
+    const rect = button.getBoundingClientRect();
+    const width = Math.min(370, window.innerWidth - 24);
+    const quickHeight = 58;
+    const spaceAbove = rect.top - 12;
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const placement =
+      spaceBelow >= 360 || spaceBelow >= spaceAbove ? "down" : "up";
+    const preferredTop =
+      placement === "down" ? rect.bottom + 8 : rect.top - quickHeight - 8;
+    const top = Math.max(
+      12,
+      Math.min(preferredTop, window.innerHeight - quickHeight - 12),
+    );
+    const panelMaxHeight = Math.max(
+      150,
+      placement === "up"
+        ? top - 22
+        : window.innerHeight - top - quickHeight - 22,
+    );
+    setReactionTarget({
+      message,
+      placement,
+      panelMaxHeight,
+      left: Math.max(
+        12,
+        Math.min(rect.right - width, window.innerWidth - width - 12),
+      ),
+      top,
+    });
+  };
   const renderMessage = (m: Message) => {
     const author = user(m.userId),
       replies = allMessages.filter((x) => x.parentId === m.id);
@@ -795,7 +852,7 @@ export default function Page() {
           <button
             title="Thả biểu cảm"
             disabled={busy}
-            onClick={() => setReactionTarget(m)}
+            onClick={(event) => openReactionPicker(m, event.currentTarget)}
           >
             <Smile size={16} />
           </button>
@@ -1809,9 +1866,17 @@ export default function Page() {
           className="reaction-overlay"
           onClick={() => setReactionTarget(null)}
         >
-          <div onClick={(event) => event.stopPropagation()}>
+          <div
+            className={`reaction-popover opens-${reactionTarget.placement}`}
+            style={{
+              left: reactionTarget.left,
+              top: reactionTarget.top,
+              "--reaction-panel-max-height": `${reactionTarget.panelMaxHeight}px`,
+            } as CSSProperties}
+            onClick={(event) => event.stopPropagation()}
+          >
             <ReactionPicker
-              onPick={(emoji) => reactTo(reactionTarget, emoji)}
+              onPick={(emoji) => reactTo(reactionTarget.message, emoji)}
               onClose={() => setReactionTarget(null)}
             />
           </div>

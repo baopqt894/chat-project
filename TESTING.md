@@ -70,3 +70,5 @@ Các test API tự xóa dữ liệu tạm. Nhóm/tin QA tạo bằng browser đ�
 - Modal Tin nhắn mới theo kiểu Discord: tìm kiếm, checkbox, chip đã chọn, trạng thái online, footer cố định; 1 người tạo DM, 2-9 người cùng người hiện tại tạo nhóm riêng tối đa 10 thành viên.
 - Playwright đã xác nhận chọn hai thành viên tạo thành công nhóm 3 người và mở đúng cuộc trò chuyện; modal responsive thành bottom sheet trên viewport 390x844.
 - Toolbar tin nhắn được ghim bên trong góc phải, cách scrollbar 18-32px và không dùng vị trí âm. Playwright đo ở 1480/1100/768/390px: đủ 5 nút, không cắt mép trên/phải và không phát sinh overflow ngang.
+- Popup reaction lấy tọa độ trực tiếp từ nút vừa bấm, canh theo cạnh phải và tự mở lên/xuống theo khoảng trống. Popup đóng khi cuộn vùng tin nhắn hoặc đổi kích thước cửa sổ.
+- Playwright production build đo tại desktop 1480x700: thanh nhanh cách nút 12px, lệch cạnh phải 3px; bảng 64 emoji co theo 318px còn trống. Tại mobile 390x844, cả thanh nhanh và bảng đầy đủ đều nằm trong viewport.
